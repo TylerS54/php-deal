@@ -1,17 +1,15 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const logger = require('firebase-functions/logger');
 const admin = require('firebase-admin');
-
+const { FieldValue } = require('firebase-admin/firestore');
 admin.initializeApp();
 
 // CREATE GAME
 exports.createGame = onCall(async (request) => {
   const { hostUid, playerIds } = request.data;
-  if (!hostUid || !playerIds || !Array.isArray(playerIds)) {
-    throw new HttpsError(
-      'invalid-argument',
-      'Must provide hostUid and an array of player UIDs.'
-    );
+  if (!hostUid || !playerIds) {
+    throw new HttpsError('invalid-argument', 'Must provide hostUid and playerIds.');
+
   }
 
   // Shuffle deck
@@ -29,7 +27,7 @@ exports.createGame = onCall(async (request) => {
     deck,
     discardPile: [],
     turnIndex: 0,
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdAt: FieldValue.serverTimestamp(),
     status: 'inProgress',
     hands: startingHands,
     properties: {},
