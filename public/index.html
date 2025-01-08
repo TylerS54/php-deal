@@ -24,80 +24,70 @@
     <script defer src="/__/firebase/init.js?useEmulator=true"></script>
 
     <script>
-      let currentGameId = null;
-      let unsubscribeGame = null;
-    
-      // Wait until the Firebase SDK is initialized:
       document.addEventListener('DOMContentLoaded', async () => {
-        // Optional: check if user is logged in, handle sign-in with Firebase Auth, etc.
+        // Example usage:
         const db = firebase.firestore();
     
-        // Example: create a new game on a button click
         document.getElementById('btnCreateGame').addEventListener('click', async () => {
           const createGameFn = firebase.functions().httpsCallable('createGame');
-          // For example, hostUid is current user, and a couple player UIDs
-          // In real usage, gather from actual sign-ins or invites
           const hostUid = 'playerA';
           const playerIds = ['playerA', 'playerB'];
     
-          const result = await createGameFn({ hostUid, playerIds });
-          currentGameId = result.data.gameId;
-          watchGame(currentGameId);
-          alert('Created a new game with ID: ' + currentGameId);
-        });
-    
-        // Example: join a game:
-        document.getElementById('btnJoinGame').addEventListener('click', async () => {
-          const gameId = prompt('Enter gameId:');
-          if (gameId) {
-            currentGameId = gameId;
-            watchGame(currentGameId);
+          try {
+            const result = await createGameFn({ hostUid, playerIds });
+            const gameId = result.data.gameId;
+            alert('Created a new game with ID: ' + gameId);
+            watchGame(gameId);
+          } catch (err) {
+            console.error('Create game error:', err);
+            alert(err.message);
           }
         });
     
-        // Example: play a property
+        document.getElementById('btnJoinGame').addEventListener('click', () => {
+          const gameId = prompt('Enter gameId:');
+          if (gameId) {
+            watchGame(gameId);
+          }
+        });
+    
         document.getElementById('btnPlayProperty').addEventListener('click', async () => {
-          if (!currentGameId) return;
+          const gameId = currentGameId;
+          if (!gameId) return alert('No game joined yet.');
+    
           const playMoveFn = firebase.functions().httpsCallable('playMove');
-          // Hard-coded for example
           const move = {
             actionType: 'PLAY_PROPERTY',
             card: { id: 'p-red-1', type: 'property', color: 'red' },
             color: 'red',
             playerId: 'playerA',
           };
+    
           try {
-            const result = await playMoveFn({ gameId: currentGameId, move });
+            const result = await playMoveFn({ gameId, move });
             console.log('Move result:', result.data);
           } catch (err) {
             alert('Error playing property: ' + err.message);
           }
         });
     
-        // Realtime listener for the game doc
+        let currentGameId = null;
+        let unsubscribeGame = null;
         function watchGame(gameId) {
-          if (unsubscribeGame) {
-            unsubscribeGame();
-          }
+          currentGameId = gameId;
+          if (unsubscribeGame) unsubscribeGame();
           const gameRef = db.collection('games').doc(gameId);
           unsubscribeGame = gameRef.onSnapshot((doc) => {
             if (!doc.exists) {
               document.getElementById('gameState').innerText = 'Game does not exist.';
               return;
             }
-            const gameData = doc.data();
-            renderGame(gameData);
+            document.getElementById('gameState').innerText = JSON.stringify(doc.data(), null, 2);
           });
-        }
-    
-        function renderGame(game) {
-          // Basic text-based rendering:
-          document.getElementById('gameState').innerText = JSON.stringify(game, null, 2);
-    
-          // You could create a better UI: show each player’s hand, highlight current turn, etc.
         }
       });
     </script>
+    
     
     <!-- Basic UI Controls -->
     <button id="btnCreateGame">Create Game</button>
