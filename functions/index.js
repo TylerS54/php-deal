@@ -4,26 +4,36 @@ const admin = require('firebase-admin');
 const { FieldValue } = require('firebase-admin/firestore');
 admin.initializeApp();
 
-// CREATE GAME
+/** 1) Generate 5-character game ID, e.g. 'A12Z7'. */
+function generateShortId() {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let result = '';
+  for (let i = 0; i < 5; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+}
+
+/** 2) Create Game */
 exports.createGame = onCall(async (request) => {
   const { hostUid, playerIds } = request.data;
   if (!hostUid || !playerIds) {
     throw new HttpsError('invalid-argument', 'Must provide hostUid and playerIds.');
-
   }
 
   // Shuffle deck
   const deck = shuffleDeck(createMonopolyDealDeck());
 
-  // Give 5 starting cards
+  // 5 starting cards each
   const startingHands = {};
   playerIds.forEach((pId) => {
     startingHands[pId] = deck.splice(0, 5);
   });
 
+  // Prepare the new doc
   const newGame = {
     hostUid,
-    playerIds,
+    playerIds,            // array of usernames
     deck,
     discardPile: [],
     turnIndex: 0,
@@ -33,13 +43,16 @@ exports.createGame = onCall(async (request) => {
     properties: {},
   };
 
-  const gameRef = await admin.firestore().collection('games').add(newGame);
-  logger.info(`Game created with ID: ${gameRef.id}`);
+  // Generate a short ID, then store with that ID as the doc.
+  const shortId = generateShortId();
+  const gameRef = admin.firestore().collection('games').doc(shortId);
+  await gameRef.set(newGame);
 
-  return { gameId: gameRef.id };
+  logger.info(`Game created with ID: ${shortId}`);
+  return { gameId: shortId };
 });
 
-// PLAY MOVE
+/** 3) Play Move */
 exports.playMove = onCall(async (request) => {
   const { gameId, move } = request.data;
   if (!gameId || !move) {
@@ -57,23 +70,21 @@ exports.playMove = onCall(async (request) => {
     const gameData = doc.data();
     const { playerIds, turnIndex, hands, properties } = gameData;
 
-    // e.g. check whose turn it is
+    // Check turn
     if (move.playerId !== playerIds[turnIndex]) {
       throw new HttpsError('failed-precondition', 'Not your turn!');
     }
 
     // Example: playing a property
     if (move.actionType === 'PLAY_PROPERTY') {
-      // Remove card from hand
-      const cardIndex = hands[move.playerId].findIndex(
-        (c) => c.id === move.card.id
-      );
+      // remove from hand
+      const cardIndex = hands[move.playerId].findIndex((c) => c.id === move.card.id);
       if (cardIndex === -1) {
         throw new HttpsError('failed-precondition', 'Card not in hand.');
       }
       const [playedCard] = hands[move.playerId].splice(cardIndex, 1);
 
-      // Move card to properties
+      // move card to properties
       if (!properties[move.playerId]) {
         properties[move.playerId] = {};
       }
@@ -83,31 +94,24 @@ exports.playMove = onCall(async (request) => {
       properties[move.playerId][move.color].push(playedCard);
     }
 
-    // Check for 3 complete sets, etc.
-    // ...
-
-    // Move to next player
+    // rotate turn
     gameData.turnIndex = (turnIndex + 1) % playerIds.length;
 
-    // Update the doc
     transaction.set(gameRef, gameData);
     return { success: true };
   });
 });
 
-// Helper functions below...
-
-
-/** Creates an array of Monopoly Deal cards. Extend as needed. */
+/** Creates an array of Monopoly Deal cards (simplified example). */
 function createMonopolyDealDeck() {
   return [
     { id: 'p-red-1', type: 'property', color: 'red' },
     { id: 'p-red-2', type: 'property', color: 'red' },
-    // ... fill in an entire deck of ~110 cards for Monopoly Deal
+    // ... etc ...
   ];
 }
 
-/** Example shuffle function */
+/** Shuffle function */
 function shuffleDeck(deck) {
   let m = deck.length;
   while (m) {
@@ -115,17 +119,4 @@ function shuffleDeck(deck) {
     [deck[m], deck[i]] = [deck[i], deck[m]];
   }
   return deck;
-}
-
-/** Check if the property color is complete. This is placeholder logic. */
-function isCompleteSet(color, cards) {
-  // Example: red requires 3
-  const setRequirements = {
-    red: 3,
-    blue: 2,
-    green: 3,
-    yellow: 3,
-    // etc...
-  };
-  return cards.length >= (setRequirements[color] || 3);
 }

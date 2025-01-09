@@ -1,164 +1,213 @@
 <!DOCTYPE html>
 <html>
   <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Welcome to Firebase Hosting</title>
+    <meta charset="utf-8" />
+    <title>Monopoly Deal</title>
 
-    <!-- update the version number as needed -->
+    <!-- Load Firebase (with useEmulator=true for local) -->
     <script defer src="/__/firebase/11.1.0/firebase-app-compat.js"></script>
-    <!-- include only the Firebase features as you need -->
     <script defer src="/__/firebase/11.1.0/firebase-auth-compat.js"></script>
-    <script defer src="/__/firebase/11.1.0/firebase-database-compat.js"></script>
     <script defer src="/__/firebase/11.1.0/firebase-firestore-compat.js"></script>
     <script defer src="/__/firebase/11.1.0/firebase-functions-compat.js"></script>
-    <script defer src="/__/firebase/11.1.0/firebase-messaging-compat.js"></script>
-    <script defer src="/__/firebase/11.1.0/firebase-storage-compat.js"></script>
-    <script defer src="/__/firebase/11.1.0/firebase-analytics-compat.js"></script>
-    <script defer src="/__/firebase/11.1.0/firebase-remote-config-compat.js"></script>
-    <script defer src="/__/firebase/11.1.0/firebase-performance-compat.js"></script>
-    <!-- 
-      initialize the SDK after all desired features are loaded, set useEmulator to false
-      to avoid connecting the SDK to running emulators.
-    -->
     <script defer src="/__/firebase/init.js?useEmulator=true"></script>
 
     <script>
-      document.addEventListener('DOMContentLoaded', async () => {
-        // Example usage:
+      document.addEventListener('DOMContentLoaded', () => {
+        // Let user input name
+        const nameInput = document.getElementById('playerName');
+
+        // Firestore handle
         const db = firebase.firestore();
-    
-        document.getElementById('btnCreateGame').addEventListener('click', async () => {
-          const createGameFn = firebase.functions().httpsCallable('createGame');
-          const hostUid = 'playerA';
-          const playerIds = ['playerA', 'playerB'];
-    
-          try {
-            const result = await createGameFn({ hostUid, playerIds });
-            const gameId = result.data.gameId;
-            alert('Created a new game with ID: ' + gameId);
-            watchGame(gameId);
-          } catch (err) {
-            console.error('Create game error:', err);
-            alert(err.message);
-          }
-        });
-    
-        document.getElementById('btnJoinGame').addEventListener('click', () => {
-          const gameId = prompt('Enter gameId:');
-          if (gameId) {
-            watchGame(gameId);
-          }
-        });
-    
-        document.getElementById('btnPlayProperty').addEventListener('click', async () => {
-          const gameId = currentGameId;
-          if (!gameId) return alert('No game joined yet.');
-    
-          const playMoveFn = firebase.functions().httpsCallable('playMove');
-          const move = {
-            actionType: 'PLAY_PROPERTY',
-            card: { id: 'p-red-1', type: 'property', color: 'red' },
-            color: 'red',
-            playerId: 'playerA',
-          };
-    
-          try {
-            const result = await playMoveFn({ gameId, move });
-            console.log('Move result:', result.data);
-          } catch (err) {
-            alert('Error playing property: ' + err.message);
-          }
-        });
-    
+
+        // Track the current game + unsubscribe
         let currentGameId = null;
         let unsubscribeGame = null;
+
+        // Utility to watch a given game
         function watchGame(gameId) {
           currentGameId = gameId;
-          if (unsubscribeGame) unsubscribeGame();
+          if (unsubscribeGame) {
+            unsubscribeGame();
+          }
           const gameRef = db.collection('games').doc(gameId);
           unsubscribeGame = gameRef.onSnapshot((doc) => {
             if (!doc.exists) {
               document.getElementById('gameState').innerText = 'Game does not exist.';
               return;
             }
-            document.getElementById('gameState').innerText = JSON.stringify(doc.data(), null, 2);
+            document.getElementById('gameState').innerText = JSON.stringify(
+              doc.data(),
+              null,
+              2
+            );
           });
         }
+
+        // CREATE GAME
+        document.getElementById('btnCreateGame').addEventListener('click', async () => {
+          const playerName = nameInput.value.trim();
+          if (!playerName) {
+            alert('Please enter your name first!');
+            return;
+          }
+          try {
+            const createGameFn = firebase.functions().httpsCallable('createGame');
+            const result = await createGameFn({
+              hostUid: playerName,
+              playerIds: [playerName],
+            });
+            const gameId = result.data.gameId;
+            alert('Created new game with ID: ' + gameId);
+            watchGame(gameId);
+          } catch (err) {
+            console.error('Create game error:', err);
+            alert(err.message);
+          }
+        });
+
+        // JOIN GAME
+        document.getElementById('btnJoinGame').addEventListener('click', async () => {
+          const playerName = nameInput.value.trim();
+          if (!playerName) {
+            alert('Please enter your name first!');
+            return;
+          }
+          const gameId = prompt('Enter game ID:');
+          if (!gameId) return;
+
+          const gameRef = db.collection('games').doc(gameId);
+          try {
+            // Add user’s name to the game’s playerIds array
+            await db.runTransaction(async (transaction) => {
+              const docSnap = await transaction.get(gameRef);
+              if (!docSnap.exists) {
+                throw new Error('Game does not exist!');
+              }
+              transaction.update(gameRef, {
+                playerIds: firebase.firestore.FieldValue.arrayUnion(playerName),
+              });
+            });
+            alert(`Joined game ${gameId} as ${playerName}`);
+            watchGame(gameId);
+          } catch (err) {
+            console.error(err);
+            alert(err.message);
+          }
+        });
+
+        // PLAY PROPERTY
+        document.getElementById('btnPlayProperty').addEventListener('click', async () => {
+          if (!currentGameId) {
+            alert('No game joined yet.');
+            return;
+          }
+          const playMoveFn = firebase.functions().httpsCallable('playMove');
+          // Hard-coded example
+          const playerName = nameInput.value.trim() || 'playerA'; // fallback
+          const move = {
+            actionType: 'PLAY_PROPERTY',
+            card: { id: 'p-red-1', type: 'property', color: 'red' },
+            color: 'red',
+            playerId: playerName,
+          };
+          try {
+            const result = await playMoveFn({ gameId: currentGameId, move });
+            console.log('Move result:', result.data);
+          } catch (err) {
+            alert('Error playing property: ' + err.message);
+          }
+        });
       });
     </script>
-    
-    
-    <!-- Basic UI Controls -->
+  </head>
+  <body style="font-family:sans-serif;">
+    <h1>Monopoly Deal</h1>
+
+    <!-- Single input for the user’s name -->
+    <div>
+      <label for="playerName">Your Name: </label>
+      <input id="playerName" type="text" placeholder="e.g. Alice" />
+    </div>
+
+  <!-- Buttons, etc. -->
+  <div>
     <button id="btnCreateGame">Create Game</button>
     <button id="btnJoinGame">Join Game</button>
     <button id="btnPlayProperty">Play Property</button>
-    <pre id="gameState" style="background:#eee; padding:1em; white-space: pre-wrap;"></pre>
-    
+  </div>
 
-    <style media="screen">
-      body { background: #ECEFF1; color: rgba(0,0,0,0.87); font-family: Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; }
-      #message { background: white; max-width: 360px; margin: 100px auto 16px; padding: 32px 24px; border-radius: 3px; }
-      #message h2 { color: #ffa100; font-weight: bold; font-size: 16px; margin: 0 0 8px; }
-      #message h1 { font-size: 22px; font-weight: 300; color: rgba(0,0,0,0.6); margin: 0 0 16px;}
-      #message p { line-height: 140%; margin: 16px 0 24px; font-size: 14px; }
-      #message a { display: block; text-align: center; background: #039be5; text-transform: uppercase; text-decoration: none; color: white; padding: 16px; border-radius: 4px; }
-      #message, #message a { box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.24); }
-      #load { color: rgba(0,0,0,0.4); text-align: center; font-size: 13px; }
-      @media (max-width: 600px) {
-        body, #message { margin-top: 0; background: white; box-shadow: none; }
-        body { border-top: 16px solid #ffa100; }
+  <pre id="gameState" style="background:#eee; padding:1em; white-space: pre-wrap;"></pre>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', async () => {
+      // 1. Sign in anonymously, so request.auth is not null
+      //    (Alternatively, use a real auth provider like Google).
+      try {
+        await firebase.auth().signInAnonymously();
+        console.log('Signed in anonymously!');
+      } catch (error) {
+        console.error('Error signing in anonymously:', error);
       }
-    </style>
-  </head>
-  <body>
-      <h1>Monopoly Deal</h1>
-      <div>
-        <button id="btnCreateGame">Create Game</button>
-        <button id="btnJoinGame">Join Game</button>
-        <button id="btnPlayProperty">Play Property</button>
-      </div>
-    
-      <pre id="gameState" style="background:#eee; padding:1em; white-space: pre-wrap;"></pre>
-    
 
-    <script>
-      document.addEventListener('DOMContentLoaded', function() {
-        const loadEl = document.querySelector('#load');
-        // // 🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥
-        // // The Firebase SDK is initialized and available here!
-        //
-        // firebase.auth().onAuthStateChanged(user => { });
-        // firebase.database().ref('/path/to/ref').on('value', snapshot => { });
-        // firebase.firestore().doc('/foo/bar').get().then(() => { });
-        // firebase.functions().httpsCallable('yourFunction')().then(() => { });
-        // firebase.messaging().requestPermission().then(() => { });
-        // firebase.storage().ref('/path/to/ref').getDownloadURL().then(() => { });
-        // firebase.analytics(); // call to activate
-        // firebase.analytics().logEvent('tutorial_completed');
-        // firebase.performance(); // call to activate
-        //
-        // // 🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥
+      // 2. Now you can safely do Firestore reads and writes
+      const db = firebase.firestore();
 
+      // Example: create a game
+      document.getElementById('btnCreateGame').addEventListener('click', async () => {
+        const createGameFn = firebase.functions().httpsCallable('createGame');
         try {
-          let app = firebase.app();
-          let features = [
-            'auth', 
-            'database', 
-            'firestore',
-            'functions',
-            'messaging', 
-            'storage', 
-            'analytics', 
-            'remoteConfig',
-            'performance',
-          ].filter(feature => typeof app[feature] === 'function');
-          loadEl.textContent = `Firebase SDK loaded with ${features.join(', ')}`;
-        } catch (e) {
-          console.error(e);
-          loadEl.textContent = 'Error loading the Firebase SDK, check the console.';
+          const result = await createGameFn({ hostUid: 'PLAYER_A', playerIds: ['PLAYER_A', 'PLAYER_B'] });
+          console.log('Created game:', result.data.gameId);
+          watchGame(result.data.gameId);
+        } catch (err) {
+          console.error('Error creating game:', err);
+          alert(err.message);
         }
       });
-    </script>
-  </body>
+
+      // Example: join a game
+      document.getElementById('btnJoinGame').addEventListener('click', () => {
+        const gameId = prompt('Enter gameId:');
+        if (gameId) watchGame(gameId);
+      });
+
+      // Example: play a property
+      document.getElementById('btnPlayProperty').addEventListener('click', async () => {
+        if (!currentGameId) {
+          alert('No game joined yet!');
+          return;
+        }
+        const playMoveFn = firebase.functions().httpsCallable('playMove');
+        try {
+          const move = {
+            actionType: 'PLAY_PROPERTY',
+            card: { id: 'p-red-1', type: 'property', color: 'red' },
+            color: 'red',
+            playerId: 'PLAYER_A',
+          };
+          const result = await playMoveFn({ gameId: currentGameId, move });
+          console.log('Played property:', result.data);
+        } catch (err) {
+          alert('Error playing property: ' + err.message);
+        }
+      });
+
+      // Realtime game watching
+      let currentGameId = null;
+      let unsubscribeGame = null;
+      function watchGame(gameId) {
+        currentGameId = gameId;
+        if (unsubscribeGame) unsubscribeGame();
+        const gameRef = db.collection('games').doc(gameId);
+        unsubscribeGame = gameRef.onSnapshot((doc) => {
+          if (!doc.exists) {
+            document.getElementById('gameState').innerText = 'Game does not exist.';
+            return;
+          }
+          document.getElementById('gameState').innerText = JSON.stringify(doc.data(), null, 2);
+        });
+      }
+    });
+  </script>
+</body>
 </html>

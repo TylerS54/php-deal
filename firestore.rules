@@ -1,15 +1,11 @@
-rules_version = '2';
+# firestore.rules
 
+rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     match /games/{gameId} {
-      allow read: if true;  // Or require membership in the game
-      allow write: if false; // Only serverless function or the host can create
-      // Alternatively, more advanced checks:
-      // allow write: if request.auth != null && <some ownership check>
+      // Only logged-in users can read/write.
+      allow read, write: if request.auth != null;
     }
-
-    // If you store sub-collections for each game (like /games/{gameId}/players/{playerId})
-    // then add rules for them likewise.
   }
 }
