@@ -4,7 +4,7 @@ const admin = require('firebase-admin');
 const { FieldValue } = require('firebase-admin/firestore');
 admin.initializeApp();
 
-/** 1) Generate 5-character game ID, e.g. 'A12Z7'. */
+/** 1) Generate 5-character ID */
 function generateShortId() {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   let result = '';
@@ -24,26 +24,26 @@ exports.createGame = onCall(async (request) => {
   // Shuffle deck
   const deck = shuffleDeck(createMonopolyDealDeck());
 
-  // 5 starting cards each
+  // Give 5 starting cards
   const startingHands = {};
   playerIds.forEach((pId) => {
     startingHands[pId] = deck.splice(0, 5);
   });
 
-  // Prepare the new doc
   const newGame = {
     hostUid,
-    playerIds,            // array of usernames
+    playerIds,
     deck,
     discardPile: [],
     turnIndex: 0,
     createdAt: FieldValue.serverTimestamp(),
-    status: 'inProgress',
+    // The key difference: set to 'lobby' so it doesn't start right away
+    status: 'lobby',
     hands: startingHands,
     properties: {},
   };
 
-  // Generate a short ID, then store with that ID as the doc.
+  // Generate a short 5-char ID, for example:
   const shortId = generateShortId();
   const gameRef = admin.firestore().collection('games').doc(shortId);
   await gameRef.set(newGame);
@@ -51,6 +51,7 @@ exports.createGame = onCall(async (request) => {
   logger.info(`Game created with ID: ${shortId}`);
   return { gameId: shortId };
 });
+
 
 /** 3) Play Move */
 exports.playMove = onCall(async (request) => {
@@ -84,7 +85,7 @@ exports.playMove = onCall(async (request) => {
       }
       const [playedCard] = hands[move.playerId].splice(cardIndex, 1);
 
-      // move card to properties
+      // move to properties
       if (!properties[move.playerId]) {
         properties[move.playerId] = {};
       }
@@ -102,16 +103,14 @@ exports.playMove = onCall(async (request) => {
   });
 });
 
-/** Creates an array of Monopoly Deal cards (simplified example). */
+/** Deck creation/shuffle... */
 function createMonopolyDealDeck() {
   return [
     { id: 'p-red-1', type: 'property', color: 'red' },
     { id: 'p-red-2', type: 'property', color: 'red' },
-    // ... etc ...
+    // ...
   ];
 }
-
-/** Shuffle function */
 function shuffleDeck(deck) {
   let m = deck.length;
   while (m) {

@@ -4,26 +4,154 @@
     <meta charset="utf-8" />
     <title>Monopoly Deal</title>
 
-    <!-- Load Firebase (with useEmulator=true for local) -->
+    <!-- Firebase scripts (with useEmulator for local testing) -->
     <script defer src="/__/firebase/11.1.0/firebase-app-compat.js"></script>
     <script defer src="/__/firebase/11.1.0/firebase-auth-compat.js"></script>
     <script defer src="/__/firebase/11.1.0/firebase-firestore-compat.js"></script>
     <script defer src="/__/firebase/11.1.0/firebase-functions-compat.js"></script>
+
+    <!-- This loads your Firebase config for local dev (auth+firestore emulators, etc.) -->
     <script defer src="/__/firebase/init.js?useEmulator=true"></script>
 
+    <style>
+      /* Basic layout styles */
+      body {
+        font-family: sans-serif;
+        margin: 0;
+        padding: 0;
+        background: #fafafa;
+      }
+      .container {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 16px;
+      }
+
+      /* Player cards grid */
+      .players-container {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        margin-top: 16px;
+      }
+      .player-card {
+        width: 180px;
+        background: #fff;
+        border-radius: 8px;
+        padding: 12px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        position: relative;
+      }
+      .player-card-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 8px;
+      }
+      .player-card img {
+        border-radius: 50%;
+      }
+      .player-card .player-name {
+        font-weight: bold;
+      }
+      .player-card .player-turn {
+        position: absolute;
+        top: 0; right: 0;
+        background: #ef5350;
+        color: white;
+        font-size: 12px;
+        padding: 2px 6px;
+        border-bottom-left-radius: 8px;
+        border-top-right-radius: 8px;
+      }
+      .player-card .player-status {
+        font-size: 14px;
+        color: #555;
+      }
+      .player-hand,
+      .player-properties {
+        margin-top: 8px;
+      }
+
+      /* Cards displayed as inline-block for example */
+      .card {
+        display: inline-block;
+        background: #e0e0e0;
+        border-radius: 4px;
+        padding: 4px 8px;
+        margin: 4px;
+      }
+
+      .status-banner {
+        margin-top: 16px;
+        font-size: 18px;
+        font-weight: bold;
+      }
+
+      .game-code {
+        font-size: 20px;
+        margin: 16px 0;
+      }
+
+      /* Example styling for the debug JSON */
+      pre.debug-output {
+        background:#eee; 
+        padding:1em; 
+        white-space:pre-wrap; 
+        margin-top:16px;
+        max-height: 300px;
+        overflow-y: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Monopoly Deal</h1>
+
+      <!-- Name input -->
+      <div>
+        <label for="playerName">Your Name: </label>
+        <input id="playerName" type="text" placeholder="e.g. Alice" />
+      </div>
+
+      <!-- Buttons -->
+      <div style="margin-top: 16px;">
+        <button id="btnCreateGame">Create Game</button>
+        <button id="btnJoinGame">Join Game</button>
+        <button id="btnPlayProperty">Play Property</button>
+        <!-- The host will see this start button if status === 'lobby' -->
+        <button id="btnStartGame" style="display:none;">Start Game</button>
+      </div>
+
+      <!-- Show the current game code, e.g. "Game Code: ABC12" -->
+      <div class="game-code" id="gameCode"></div>
+
+      <!-- Show game status, e.g. "In Lobby" or "In Progress" -->
+      <div class="status-banner" id="gameStatusBanner"></div>
+
+      <!-- A place to show players, their cards, etc. -->
+      <div class="players-container" id="playersContainer"></div>
+
+      <!-- The raw JSON data (optional for debugging) -->
+      <pre class="debug-output" id="gameState"></pre>
+    </div>
+
     <script>
-      document.addEventListener('DOMContentLoaded', () => {
-        // Let user input name
-        const nameInput = document.getElementById('playerName');
+      document.addEventListener('DOMContentLoaded', async () => {
+        // 1) Sign in anonymously
+        try {
+          await firebase.auth().signInAnonymously();
+          console.log('Signed in anonymously');
+        } catch (error) {
+          console.error('Error signing in anonymously:', error);
+        }
 
-        // Firestore handle
         const db = firebase.firestore();
-
-        // Track the current game + unsubscribe
+        const functions = firebase.functions();
         let currentGameId = null;
         let unsubscribeGame = null;
 
-        // Utility to watch a given game
+        // 2) watchGame helper
         function watchGame(gameId) {
           currentGameId = gameId;
           if (unsubscribeGame) {
@@ -33,27 +161,133 @@
           unsubscribeGame = gameRef.onSnapshot((doc) => {
             if (!doc.exists) {
               document.getElementById('gameState').innerText = 'Game does not exist.';
+              document.getElementById('gameCode').textContent = '';
+              document.getElementById('gameStatusBanner').textContent = '';
+              document.getElementById('playersContainer').innerHTML = '';
               return;
             }
-            document.getElementById('gameState').innerText = JSON.stringify(
-              doc.data(),
-              null,
-              2
-            );
+            const data = doc.data();
+            renderGame(gameId, data);
           });
         }
 
-        // CREATE GAME
+        // 3) Render the game in the UI
+        function renderGame(gameId, gameData) {
+          // Show raw JSON for debugging
+          document.getElementById('gameState').innerText = JSON.stringify(gameData, null, 2);
+
+          // Show the game code
+          document.getElementById('gameCode').textContent = 'Game Code: ' + gameId;
+
+          // Show game status
+          const { status, hostUid, playerIds, turnIndex, hands, properties } = gameData;
+          document.getElementById('gameStatusBanner').textContent = 'Game Status: ' + (status || '???');
+
+          // If you are the host and status === 'lobby', show the "Start Game" button
+          const localName = document.getElementById('playerName').value.trim();
+          const startBtn = document.getElementById('btnStartGame');
+          if (localName === hostUid && status === 'lobby') {
+            startBtn.style.display = 'inline-block';
+          } else {
+            startBtn.style.display = 'none';
+          }
+
+          // Render the players
+          const playersContainer = document.getElementById('playersContainer');
+          playersContainer.innerHTML = ''; // clear old stuff
+
+          // We'll interpret "hands" as an object: { [playerName]: Card[] }
+          // and "properties" as { [playerName]: { [colorName]: Card[] } }
+          if (!playerIds) return;
+
+          playerIds.forEach((playerName, index) => {
+            // Build a card for each player
+            const playerDiv = document.createElement('div');
+            playerDiv.className = 'player-card';
+
+            // If it’s that player’s turn
+            if (index === turnIndex && status === 'inProgress') {
+              const turnBadge = document.createElement('div');
+              turnBadge.className = 'player-turn';
+              turnBadge.textContent = 'TURN';
+              playerDiv.appendChild(turnBadge);
+            }
+
+            // Header: avatar + name
+            const headerDiv = document.createElement('div');
+            headerDiv.className = 'player-card-header';
+            playerDiv.appendChild(headerDiv);
+
+            // Avatar
+            const avatarUrl = `https://api.dicebear.com/6.x/bottts/svg?seed=${encodeURIComponent(playerName)}`;
+            const img = document.createElement('img');
+            img.src = avatarUrl;
+            img.width = 40;
+            img.height = 40;
+            headerDiv.appendChild(img);
+
+            // Name
+            const nameSpan = document.createElement('span');
+            nameSpan.className = 'player-name';
+            nameSpan.textContent = playerName;
+            headerDiv.appendChild(nameSpan);
+
+            // Next line: “hand” or “# of cards”
+            const handDiv = document.createElement('div');
+            handDiv.className = 'player-hand';
+
+            if (playerName === localName) {
+              // Show actual card info if it's the local player
+              const playerHand = (hands && hands[playerName]) || [];
+              handDiv.innerHTML = '<strong>Your Hand:</strong><br/>';
+              playerHand.forEach((card) => {
+                const cardSpan = document.createElement('span');
+                cardSpan.className = 'card';
+                cardSpan.textContent = card.id; // or display color/type
+                handDiv.appendChild(cardSpan);
+              });
+            } else {
+              // Show only the count of cards
+              const playerHandCount = (hands && hands[playerName]) ? hands[playerName].length : 0;
+              handDiv.textContent = `Cards in Hand: ${playerHandCount}`;
+            }
+            playerDiv.appendChild(handDiv);
+
+            // Properties row
+            const propDiv = document.createElement('div');
+            propDiv.className = 'player-properties';
+            propDiv.innerHTML = '<strong>Properties:</strong><br/>';
+            const playerProps = (properties && properties[playerName]) || {};
+
+            // Example: iterate each color => show each card
+            Object.keys(playerProps).forEach((color) => {
+              const cards = playerProps[color] || [];
+              cards.forEach((card) => {
+                const cardSpan = document.createElement('span');
+                cardSpan.className = 'card';
+                cardSpan.textContent = `${card.id} (${color})`;
+                propDiv.appendChild(cardSpan);
+              });
+            });
+            playerDiv.appendChild(propDiv);
+
+            playersContainer.appendChild(playerDiv);
+          });
+        }
+
+        // 4) Create Game
         document.getElementById('btnCreateGame').addEventListener('click', async () => {
-          const playerName = nameInput.value.trim();
+          const playerName = document.getElementById('playerName').value.trim();
           if (!playerName) {
             alert('Please enter your name first!');
             return;
           }
           try {
-            const createGameFn = firebase.functions().httpsCallable('createGame');
+            const createGameFn = functions.httpsCallable('createGame');
             const result = await createGameFn({
               hostUid: playerName,
+              // We start in a 'lobby' status. The function can set it.
+              // We'll pass initial playerIds as [playerName].
               playerIds: [playerName],
             });
             const gameId = result.data.gameId;
@@ -65,9 +299,9 @@
           }
         });
 
-        // JOIN GAME
+        // 5) Join Game
         document.getElementById('btnJoinGame').addEventListener('click', async () => {
-          const playerName = nameInput.value.trim();
+          const playerName = document.getElementById('playerName').value.trim();
           if (!playerName) {
             alert('Please enter your name first!');
             return;
@@ -83,6 +317,11 @@
               if (!docSnap.exists) {
                 throw new Error('Game does not exist!');
               }
+              const data = docSnap.data();
+              // If game has not started, let them join
+              if (data.status === 'inProgress' || data.status === 'finished') {
+                throw new Error('Game already in progress or finished!');
+              }
               transaction.update(gameRef, {
                 playerIds: firebase.firestore.FieldValue.arrayUnion(playerName),
               });
@@ -95,15 +334,14 @@
           }
         });
 
-        // PLAY PROPERTY
+        // 6) Play Property
         document.getElementById('btnPlayProperty').addEventListener('click', async () => {
           if (!currentGameId) {
             alert('No game joined yet.');
             return;
           }
-          const playMoveFn = firebase.functions().httpsCallable('playMove');
-          // Hard-coded example
-          const playerName = nameInput.value.trim() || 'playerA'; // fallback
+          const playerName = document.getElementById('playerName').value.trim() || 'PLAYER_A';
+          const playMoveFn = functions.httpsCallable('playMove');
           const move = {
             actionType: 'PLAY_PROPERTY',
             card: { id: 'p-red-1', type: 'property', color: 'red' },
@@ -117,97 +355,26 @@
             alert('Error playing property: ' + err.message);
           }
         });
-      });
-    </script>
-  </head>
-  <body style="font-family:sans-serif;">
-    <h1>Monopoly Deal</h1>
 
-    <!-- Single input for the user’s name -->
-    <div>
-      <label for="playerName">Your Name: </label>
-      <input id="playerName" type="text" placeholder="e.g. Alice" />
-    </div>
-
-  <!-- Buttons, etc. -->
-  <div>
-    <button id="btnCreateGame">Create Game</button>
-    <button id="btnJoinGame">Join Game</button>
-    <button id="btnPlayProperty">Play Property</button>
-  </div>
-
-  <pre id="gameState" style="background:#eee; padding:1em; white-space: pre-wrap;"></pre>
-
-  <script>
-    document.addEventListener('DOMContentLoaded', async () => {
-      // 1. Sign in anonymously, so request.auth is not null
-      //    (Alternatively, use a real auth provider like Google).
-      try {
-        await firebase.auth().signInAnonymously();
-        console.log('Signed in anonymously!');
-      } catch (error) {
-        console.error('Error signing in anonymously:', error);
-      }
-
-      // 2. Now you can safely do Firestore reads and writes
-      const db = firebase.firestore();
-
-      // Example: create a game
-      document.getElementById('btnCreateGame').addEventListener('click', async () => {
-        const createGameFn = firebase.functions().httpsCallable('createGame');
-        try {
-          const result = await createGameFn({ hostUid: 'PLAYER_A', playerIds: ['PLAYER_A', 'PLAYER_B'] });
-          console.log('Created game:', result.data.gameId);
-          watchGame(result.data.gameId);
-        } catch (err) {
-          console.error('Error creating game:', err);
-          alert(err.message);
-        }
-      });
-
-      // Example: join a game
-      document.getElementById('btnJoinGame').addEventListener('click', () => {
-        const gameId = prompt('Enter gameId:');
-        if (gameId) watchGame(gameId);
-      });
-
-      // Example: play a property
-      document.getElementById('btnPlayProperty').addEventListener('click', async () => {
-        if (!currentGameId) {
-          alert('No game joined yet!');
-          return;
-        }
-        const playMoveFn = firebase.functions().httpsCallable('playMove');
-        try {
-          const move = {
-            actionType: 'PLAY_PROPERTY',
-            card: { id: 'p-red-1', type: 'property', color: 'red' },
-            color: 'red',
-            playerId: 'PLAYER_A',
-          };
-          const result = await playMoveFn({ gameId: currentGameId, move });
-          console.log('Played property:', result.data);
-        } catch (err) {
-          alert('Error playing property: ' + err.message);
-        }
-      });
-
-      // Realtime game watching
-      let currentGameId = null;
-      let unsubscribeGame = null;
-      function watchGame(gameId) {
-        currentGameId = gameId;
-        if (unsubscribeGame) unsubscribeGame();
-        const gameRef = db.collection('games').doc(gameId);
-        unsubscribeGame = gameRef.onSnapshot((doc) => {
-          if (!doc.exists) {
-            document.getElementById('gameState').innerText = 'Game does not exist.';
+        // 7) Start Game (host only)
+        document.getElementById('btnStartGame').addEventListener('click', async () => {
+          if (!currentGameId) {
+            alert('No game code available.');
             return;
           }
-          document.getElementById('gameState').innerText = JSON.stringify(doc.data(), null, 2);
+          const gameRef = db.collection('games').doc(currentGameId);
+          try {
+            await gameRef.update({
+              status: 'inProgress',
+            });
+            alert('Game started!');
+          } catch (err) {
+            console.error(err);
+            alert(err.message);
+          }
         });
-      }
-    });
-  </script>
-</body>
+
+      });
+    </script>
+  </body>
 </html>
