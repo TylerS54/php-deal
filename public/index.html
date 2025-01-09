@@ -49,7 +49,7 @@
         margin-bottom: 8px;
       }
       .player-card img {
-        border-radius: 50%;
+        border-radius: 5%;
       }
       .player-card .player-name {
         font-weight: bold;
@@ -240,17 +240,58 @@
               // Show actual card info if it's the local player
               const playerHand = (hands && hands[playerName]) || [];
               handDiv.innerHTML = '<strong>Your Hand:</strong><br/>';
+              // Show actual card info if it's the local player
               playerHand.forEach((card) => {
-                const cardSpan = document.createElement('span');
-                cardSpan.className = 'card';
-                cardSpan.textContent = card.id; // or display color/type
-                handDiv.appendChild(cardSpan);
+                // Create a container element for this card
+                const cardElem = document.createElement('div');
+                cardElem.className = 'card'; 
+                // Some styling so the card is clickable
+                cardElem.style.display = 'inline-block';
+                cardElem.style.cursor = 'pointer';
+                cardElem.style.margin = '4px';
+                
+                // If the deck has an imageUrl, use it:
+                if (card.imageUrl) {
+                  const img = document.createElement('img');
+                  img.src = card.imageUrl;
+                  img.width = 60; // or whatever size
+                  cardElem.appendChild(img);
+                } else {
+                  // fallback text if no image
+                  cardElem.textContent = card.id;
+                  cardElem.style.background = '#e0e0e0';
+                  cardElem.style.padding = '4px 8px';
+                  cardElem.style.borderRadius = '4px';
+                }
+
+                // Add a click handler that asks: "Play this card?"
+                cardElem.addEventListener('click', async () => {
+                  const confirmPlay = confirm(`Play ${card.id}?`);
+                  if (!confirmPlay) return;
+
+                  // Now call the 'playMove' function
+                  try {
+                    const playMoveFn = firebase.functions().httpsCallable('playMove');
+                    const move = {
+                      actionType: 'PLAY_PROPERTY', // or 'PLAY_ACTION', etc.
+                      card: card,
+                      color: card.color,          // if property
+                      playerId: localName,
+                    };
+                    const result = await playMoveFn({ gameId, move });
+                    console.log('Move result:', result.data);
+                  } catch (err) {
+                    alert('Error playing property: ' + err.message);
+                  }
+                });
+
+                handDiv.appendChild(cardElem);
               });
-            } else {
-              // Show only the count of cards
-              const playerHandCount = (hands && hands[playerName]) ? hands[playerName].length : 0;
-              handDiv.textContent = `Cards in Hand: ${playerHandCount}`;
-            }
+              } else {
+                // For other players, just show "Cards in Hand: X"
+                const playerHandCount = (hands && hands[playerName]) ? hands[playerName].length : 0;
+                handDiv.textContent = `Cards in Hand: ${playerHandCount}`;
+              }
             playerDiv.appendChild(handDiv);
 
             // Properties row
@@ -356,23 +397,22 @@
           }
         });
 
-        // 7) Start Game (host only)
-        document.getElementById('btnStartGame').addEventListener('click', async () => {
-          if (!currentGameId) {
-            alert('No game code available.');
-            return;
-          }
-          const gameRef = db.collection('games').doc(currentGameId);
-          try {
-            await gameRef.update({
-              status: 'inProgress',
-            });
-            alert('Game started!');
-          } catch (err) {
-            console.error(err);
-            alert(err.message);
-          }
-        });
+          // 7) Start Game (host only)
+          document.getElementById('btnStartGame').addEventListener('click', async () => {
+            if (!currentGameId) {
+              alert('No game code available.');
+              return;
+            }
+            try {
+              const startGameFn = firebase.functions().httpsCallable('startGame');
+              await startGameFn({ gameId: currentGameId });
+              alert('Game started! (5 cards dealt to each player)');
+            } catch (err) {
+              console.error(err);
+              alert(err.message);
+            }
+          });
+
 
       });
     </script>
