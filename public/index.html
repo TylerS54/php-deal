@@ -14,7 +14,6 @@
     <script defer src="/__/firebase/init.js?useEmulator=true"></script>
 
     <style>
-      /* Basic layout styles */
       body {
         font-family: sans-serif;
         margin: 0;
@@ -26,8 +25,6 @@
         margin: 0 auto;
         padding: 16px;
       }
-
-      /* Player cards grid */
       .players-container {
         display: flex;
         flex-wrap: wrap;
@@ -35,7 +32,7 @@
         margin-top: 16px;
       }
       .player-card {
-        width: 180px;
+        width: 200px;
         background: #fff;
         border-radius: 8px;
         padding: 12px;
@@ -48,13 +45,7 @@
         gap: 8px;
         margin-bottom: 8px;
       }
-      .player-card img {
-        border-radius: 5%;
-      }
-      .player-card .player-name {
-        font-weight: bold;
-      }
-      .player-card .player-turn {
+      .player-turn {
         position: absolute;
         top: 0; right: 0;
         background: #ef5350;
@@ -64,37 +55,33 @@
         border-bottom-left-radius: 8px;
         border-top-right-radius: 8px;
       }
-      .player-card .player-status {
-        font-size: 14px;
-        color: #555;
-      }
-      .player-hand,
-      .player-properties {
-        margin-top: 8px;
-      }
-
-      /* Cards displayed as inline-block for example */
       .card {
         display: inline-block;
-        background: #e0e0e0;
-        border-radius: 4px;
-        padding: 4px 8px;
         margin: 4px;
+        cursor: pointer;
+        position: relative;
+        overflow: hidden;
+        transition: transform 0.2s; /* smooth enlarge */
+      }
+      .card img {
+        width: 60px;
+        border-radius: 4px;
+        transition: transform 0.2s;
+      }
+      /* Hover to enlarge */
+      .card:hover img {
+        transform: scale(1.5);
+        z-index: 99;
       }
 
-      .status-banner {
-        margin-top: 16px;
-        font-size: 18px;
+      /* Bank styling example */
+      .player-bank {
+        margin-top: 8px;
+      }
+      .bank-total {
         font-weight: bold;
       }
-
-      .game-code {
-        font-size: 20px;
-        margin: 16px 0;
-      }
-
-      /* Example styling for the debug JSON */
-      pre.debug-output {
+      .debug-output {
         background:#eee; 
         padding:1em; 
         white-space:pre-wrap; 
@@ -118,27 +105,26 @@
       <div style="margin-top: 16px;">
         <button id="btnCreateGame">Create Game</button>
         <button id="btnJoinGame">Join Game</button>
-        <button id="btnPlayProperty">Play Property</button>
-        <!-- The host will see this start button if status === 'lobby' -->
         <button id="btnStartGame" style="display:none;">Start Game</button>
+        <button id="btnBeginTurn" style="display:none;">Begin Turn</button>
+        <button id="btnEndTurn" style="display:none;">End Turn</button>
       </div>
 
       <!-- Show the current game code, e.g. "Game Code: ABC12" -->
-      <div class="game-code" id="gameCode"></div>
+      <div id="gameCode" style="font-size:20px; margin:16px 0;"></div>
 
-      <!-- Show game status, e.g. "In Lobby" or "In Progress" -->
-      <div class="status-banner" id="gameStatusBanner"></div>
+      <!-- Show game status -->
+      <div id="gameStatusBanner" style="font-size:18px; font-weight:bold;"></div>
 
       <!-- A place to show players, their cards, etc. -->
       <div class="players-container" id="playersContainer"></div>
 
-      <!-- The raw JSON data (optional for debugging) -->
+      <!-- Debug JSON -->
       <pre class="debug-output" id="gameState"></pre>
     </div>
 
     <script>
       document.addEventListener('DOMContentLoaded', async () => {
-        // 1) Sign in anonymously
         try {
           await firebase.auth().signInAnonymously();
           console.log('Signed in anonymously');
@@ -148,22 +134,18 @@
 
         const db = firebase.firestore();
         const functions = firebase.functions();
+
         let currentGameId = null;
         let unsubscribeGame = null;
 
-        // 2) watchGame helper
+        // Watch a given game ID in Firestore
         function watchGame(gameId) {
           currentGameId = gameId;
-          if (unsubscribeGame) {
-            unsubscribeGame();
-          }
+          if (unsubscribeGame) unsubscribeGame();
           const gameRef = db.collection('games').doc(gameId);
           unsubscribeGame = gameRef.onSnapshot((doc) => {
             if (!doc.exists) {
               document.getElementById('gameState').innerText = 'Game does not exist.';
-              document.getElementById('gameCode').textContent = '';
-              document.getElementById('gameStatusBanner').textContent = '';
-              document.getElementById('playersContainer').innerHTML = '';
               return;
             }
             const data = doc.data();
@@ -171,152 +153,183 @@
           });
         }
 
-        // 3) Render the game in the UI
+        // Renders the entire game state for the UI
         function renderGame(gameId, gameData) {
-          // Show raw JSON for debugging
           document.getElementById('gameState').innerText = JSON.stringify(gameData, null, 2);
-
-          // Show the game code
           document.getElementById('gameCode').textContent = 'Game Code: ' + gameId;
 
-          // Show game status
-          const { status, hostUid, playerIds, turnIndex, hands, properties } = gameData;
-          document.getElementById('gameStatusBanner').textContent = 'Game Status: ' + (status || '???');
+          const { status, hostUid, playerIds, turnIndex, hands, properties, bank, numPlaysThisTurn } = gameData;
+          document.getElementById('gameStatusBanner').textContent = 'Game Status: ' + status;
 
-          // If you are the host and status === 'lobby', show the "Start Game" button
+          // If I'm the host & status=lobby, show startGame
           const localName = document.getElementById('playerName').value.trim();
-          const startBtn = document.getElementById('btnStartGame');
-          if (localName === hostUid && status === 'lobby') {
-            startBtn.style.display = 'inline-block';
+          const btnStartGame = document.getElementById('btnStartGame');
+          btnStartGame.style.display = (localName === hostUid && status === 'lobby') ? 'inline-block' : 'none';
+
+          // If status=inProgress and it's my turn, show Begin/End Turn if needed.
+          const btnBeginTurn = document.getElementById('btnBeginTurn');
+          const btnEndTurn = document.getElementById('btnEndTurn');
+
+          if (status === 'inProgress' && localName === playerIds[turnIndex]) {
+            btnBeginTurn.style.display = (numPlaysThisTurn === 0) ? 'inline-block' : 'none';
+            btnEndTurn.style.display = 'inline-block';
           } else {
-            startBtn.style.display = 'none';
+            btnBeginTurn.style.display = 'none';
+            btnEndTurn.style.display = 'none';
           }
 
-          // Render the players
-          const playersContainer = document.getElementById('playersContainer');
-          playersContainer.innerHTML = ''; // clear old stuff
+          // Render each player's section
+          const container = document.getElementById('playersContainer');
+          container.innerHTML = '';
 
-          // We'll interpret "hands" as an object: { [playerName]: Card[] }
-          // and "properties" as { [playerName]: { [colorName]: Card[] } }
           if (!playerIds) return;
+          playerIds.forEach((pName, idx) => {
+            const cardDiv = document.createElement('div');
+            cardDiv.className = 'player-card';
 
-          playerIds.forEach((playerName, index) => {
-            // Build a card for each player
-            const playerDiv = document.createElement('div');
-            playerDiv.className = 'player-card';
-
-            // If it’s that player’s turn
-            if (index === turnIndex && status === 'inProgress') {
+            // Turn marker
+            if (status === 'inProgress' && idx === turnIndex) {
               const turnBadge = document.createElement('div');
               turnBadge.className = 'player-turn';
               turnBadge.textContent = 'TURN';
-              playerDiv.appendChild(turnBadge);
+              cardDiv.appendChild(turnBadge);
             }
 
             // Header: avatar + name
-            const headerDiv = document.createElement('div');
-            headerDiv.className = 'player-card-header';
-            playerDiv.appendChild(headerDiv);
+            const header = document.createElement('div');
+            header.className = 'player-card-header';
+            cardDiv.appendChild(header);
 
-            // Avatar
-            const avatarUrl = `https://api.dicebear.com/6.x/bottts/svg?seed=${encodeURIComponent(playerName)}`;
+            const avatarUrl = `https://api.dicebear.com/6.x/bottts/svg?seed=${encodeURIComponent(pName)}`;
             const img = document.createElement('img');
             img.src = avatarUrl;
-            img.width = 40;
+            img.width = 40; 
             img.height = 40;
-            headerDiv.appendChild(img);
+            header.appendChild(img);
 
-            // Name
             const nameSpan = document.createElement('span');
-            nameSpan.className = 'player-name';
-            nameSpan.textContent = playerName;
-            headerDiv.appendChild(nameSpan);
+            nameSpan.textContent = pName;
+            header.appendChild(nameSpan);
 
-            // Next line: “hand” or “# of cards”
-            const handDiv = document.createElement('div');
-            handDiv.className = 'player-hand';
+            // Show player's bank
+            const bankDiv = document.createElement('div');
+            bankDiv.className = 'player-bank';
+            const playerBank = (bank && bank[pName]) || [];
+            let totalBankValue = 0;
+            playerBank.forEach((bCard) => {
+              totalBankValue += bCard.value || 0;
+            });
+            bankDiv.innerHTML = `<strong>Bank ($${totalBankValue}):</strong><br/>`;
+            // Show each banked card image
+            playerBank.forEach((bCard) => {
+              const c = document.createElement('div');
+              c.className = 'card';
+              if (bCard.imageUrl) {
+                const bImg = document.createElement('img');
+                bImg.src = bCard.imageUrl;
+                c.appendChild(bImg);
+              } else {
+                c.textContent = bCard.title || bCard.id;
+              }
+              bankDiv.appendChild(c);
+            });
+            cardDiv.appendChild(bankDiv);
 
-            if (playerName === localName) {
-              // Show actual card info if it's the local player
-              const playerHand = (hands && hands[playerName]) || [];
-              handDiv.innerHTML = '<strong>Your Hand:</strong><br/>';
-              // Show actual card info if it's the local player
-              playerHand.forEach((card) => {
-                // Create a container element for this card
-                const cardElem = document.createElement('div');
-                cardElem.className = 'card'; 
-                // Some styling so the card is clickable
-                cardElem.style.display = 'inline-block';
-                cardElem.style.cursor = 'pointer';
-                cardElem.style.margin = '4px';
-                
-                // If the deck has an imageUrl, use it:
-                if (card.imageUrl) {
-                  const img = document.createElement('img');
-                  img.src = card.imageUrl;
-                  img.width = 60; // or whatever size
-                  cardElem.appendChild(img);
+            // Show player's properties
+            const propDiv = document.createElement('div');
+            propDiv.innerHTML = '<strong>Properties:</strong><br/>';
+            const playerProps = (properties && properties[pName]) || {};
+            Object.keys(playerProps).forEach((color) => {
+              const colorCards = playerProps[color] || [];
+              colorCards.forEach((pcard) => {
+                const c = document.createElement('div');
+                c.className = 'card';
+                if (pcard.imageUrl) {
+                  const pImg = document.createElement('img');
+                  pImg.src = pcard.imageUrl;
+                  c.appendChild(pImg);
                 } else {
-                  // fallback text if no image
-                  cardElem.textContent = card.id;
-                  cardElem.style.background = '#e0e0e0';
-                  cardElem.style.padding = '4px 8px';
-                  cardElem.style.borderRadius = '4px';
+                  c.textContent = pcard.title || pcard.id;
+                }
+                propDiv.appendChild(c);
+              });
+            });
+            cardDiv.appendChild(propDiv);
+
+            // Show hand (only if local player)
+            const handDiv = document.createElement('div');
+            if (pName === localName) {
+              handDiv.innerHTML = '<strong>Your Hand:</strong><br/>';
+              const myHand = (hands && hands[pName]) || [];
+              myHand.forEach((hCard) => {
+                const c = document.createElement('div');
+                c.className = 'card';
+                if (hCard.imageUrl) {
+                  const hImg = document.createElement('img');
+                  hImg.src = hCard.imageUrl;
+                  c.appendChild(hImg);
+                } else {
+                  c.textContent = hCard.title || hCard.id;
                 }
 
-                // Add a click handler that asks: "Play this card?"
-                cardElem.addEventListener('click', async () => {
-                  const confirmPlay = confirm(`Play ${card.id}?`);
-                  if (!confirmPlay) return;
-
-                  // Now call the 'playMove' function
-                  try {
-                    const playMoveFn = firebase.functions().httpsCallable('playMove');
-                    const move = {
-                      actionType: 'PLAY_PROPERTY', // or 'PLAY_ACTION', etc.
-                      card: card,
-                      color: card.color,          // if property
-                      playerId: localName,
-                    };
-                    const result = await playMoveFn({ gameId, move });
-                    console.log('Move result:', result.data);
-                  } catch (err) {
-                    alert('Error playing property: ' + err.message);
+                // On click => ask user how to play/bank
+                c.addEventListener('click', async () => {
+                  // If it's property, only "play property." If it's non-property, we can ask bank or action
+                  if (hCard.type === 'property' || hCard.type === 'property-wild') {
+                    if (!confirm(`Play ${hCard.title || hCard.id} as property?`)) return;
+                    try {
+                      const playMoveFn = functions.httpsCallable('playMove');
+                      const result = await playMoveFn({
+                        gameId: currentGameId,
+                        move: {
+                          actionType: 'PLAY_CARD',
+                          playerId: localName,
+                          card: hCard,
+                          playAs: 'property',
+                          color: hCard.color || 'any',
+                        },
+                      });
+                      console.log('PLAY_CARD result:', result.data);
+                    } catch (err) {
+                      alert(err.message);
+                    }
+                  } else {
+                    // Not a property => can be banked or used as an action
+                    const choice = prompt(`Type 'bank' or 'action' to use ${hCard.title || hCard.id}`);
+                    if (!choice) return;
+                    if (choice === 'bank' || choice === 'action') {
+                      try {
+                        const playMoveFn = functions.httpsCallable('playMove');
+                        const result = await playMoveFn({
+                          gameId: currentGameId,
+                          move: {
+                            actionType: 'PLAY_CARD',
+                            playerId: localName,
+                            card: hCard,
+                            playAs: choice,
+                          },
+                        });
+                        console.log('PLAY_CARD result:', result.data);
+                      } catch (err) {
+                        alert(err.message);
+                      }
+                    }
                   }
                 });
 
-                handDiv.appendChild(cardElem);
+                handDiv.appendChild(c);
               });
-              } else {
-                // For other players, just show "Cards in Hand: X"
-                const playerHandCount = (hands && hands[playerName]) ? hands[playerName].length : 0;
-                handDiv.textContent = `Cards in Hand: ${playerHandCount}`;
-              }
-            playerDiv.appendChild(handDiv);
+            } else {
+              const count = (hands && hands[pName]) ? hands[pName].length : 0;
+              handDiv.innerHTML = `<strong>Cards in Hand:</strong> ${count}`;
+            }
+            cardDiv.appendChild(handDiv);
 
-            // Properties row
-            const propDiv = document.createElement('div');
-            propDiv.className = 'player-properties';
-            propDiv.innerHTML = '<strong>Properties:</strong><br/>';
-            const playerProps = (properties && properties[playerName]) || {};
-
-            // Example: iterate each color => show each card
-            Object.keys(playerProps).forEach((color) => {
-              const cards = playerProps[color] || [];
-              cards.forEach((card) => {
-                const cardSpan = document.createElement('span');
-                cardSpan.className = 'card';
-                cardSpan.textContent = `${card.id} (${color})`;
-                propDiv.appendChild(cardSpan);
-              });
-            });
-            playerDiv.appendChild(propDiv);
-
-            playersContainer.appendChild(playerDiv);
+            container.appendChild(cardDiv);
           });
         }
 
-        // 4) Create Game
+        // Create Game
         document.getElementById('btnCreateGame').addEventListener('click', async () => {
           const playerName = document.getElementById('playerName').value.trim();
           if (!playerName) {
@@ -324,23 +337,20 @@
             return;
           }
           try {
-            const createGameFn = functions.httpsCallable('createGame');
-            const result = await createGameFn({
+            const fn = functions.httpsCallable('createGame');
+            const result = await fn({
               hostUid: playerName,
-              // We start in a 'lobby' status. The function can set it.
-              // We'll pass initial playerIds as [playerName].
               playerIds: [playerName],
             });
             const gameId = result.data.gameId;
             alert('Created new game with ID: ' + gameId);
             watchGame(gameId);
           } catch (err) {
-            console.error('Create game error:', err);
             alert(err.message);
           }
         });
 
-        // 5) Join Game
+        // Join Game
         document.getElementById('btnJoinGame').addEventListener('click', async () => {
           const playerName = document.getElementById('playerName').value.trim();
           if (!playerName) {
@@ -350,69 +360,81 @@
           const gameId = prompt('Enter game ID:');
           if (!gameId) return;
 
-          const gameRef = db.collection('games').doc(gameId);
           try {
-            // Add user’s name to the game’s playerIds array
-            await db.runTransaction(async (transaction) => {
-              const docSnap = await transaction.get(gameRef);
-              if (!docSnap.exists) {
-                throw new Error('Game does not exist!');
-              }
-              const data = docSnap.data();
-              // If game has not started, let them join
-              if (data.status === 'inProgress' || data.status === 'finished') {
+            const gameRef = db.collection('games').doc(gameId);
+            await db.runTransaction(async (tx) => {
+              const snap = await tx.get(gameRef);
+              if (!snap.exists) throw new Error('Game does not exist!');
+              const data = snap.data();
+              if (data.status !== 'lobby') {
                 throw new Error('Game already in progress or finished!');
               }
-              transaction.update(gameRef, {
+              tx.update(gameRef, {
                 playerIds: firebase.firestore.FieldValue.arrayUnion(playerName),
+                [`hands.${playerName}`]: [],
+                [`bank.${playerName}`]: [],
+                [`properties.${playerName}`]: {},
               });
             });
             alert(`Joined game ${gameId} as ${playerName}`);
             watchGame(gameId);
           } catch (err) {
-            console.error(err);
             alert(err.message);
           }
         });
 
-        // 6) Play Property
-        document.getElementById('btnPlayProperty').addEventListener('click', async () => {
+        // Start Game
+        document.getElementById('btnStartGame').addEventListener('click', async () => {
           if (!currentGameId) {
-            alert('No game joined yet.');
+            alert('No game code available.');
             return;
           }
-          const playerName = document.getElementById('playerName').value.trim() || 'PLAYER_A';
-          const playMoveFn = functions.httpsCallable('playMove');
-          const move = {
-            actionType: 'PLAY_PROPERTY',
-            card: { id: 'p-red-1', type: 'property', color: 'red' },
-            color: 'red',
-            playerId: playerName,
-          };
           try {
-            const result = await playMoveFn({ gameId: currentGameId, move });
-            console.log('Move result:', result.data);
+            const fn = functions.httpsCallable('startGame');
+            await fn({ gameId: currentGameId });
+            alert('Game started! (5 cards dealt to each player)');
           } catch (err) {
-            alert('Error playing property: ' + err.message);
+            alert(err.message);
           }
         });
 
-          // 7) Start Game (host only)
-          document.getElementById('btnStartGame').addEventListener('click', async () => {
-            if (!currentGameId) {
-              alert('No game code available.');
-              return;
-            }
-            try {
-              const startGameFn = firebase.functions().httpsCallable('startGame');
-              await startGameFn({ gameId: currentGameId });
-              alert('Game started! (5 cards dealt to each player)');
-            } catch (err) {
-              console.error(err);
-              alert(err.message);
-            }
-          });
+        // Begin Turn (draw 2)
+        document.getElementById('btnBeginTurn').addEventListener('click', async () => {
+          if (!currentGameId) return;
+          const localName = document.getElementById('playerName').value.trim();
+          const fn = functions.httpsCallable('playMove');
+          try {
+            await fn({ 
+              gameId: currentGameId,
+              move: {
+                actionType: 'BEGIN_TURN',
+                playerId: localName,
+              },
+            });
+            console.log('Drew 2 cards');
+          } catch (err) {
+            alert(err.message);
+          }
+        });
 
+        // End Turn
+        document.getElementById('btnEndTurn').addEventListener('click', async () => {
+          if (!currentGameId) return;
+          const localName = document.getElementById('playerName').value.trim();
+          const fn = functions.httpsCallable('playMove');
+          try {
+            await fn({
+              gameId: currentGameId,
+              move: {
+                actionType: 'END_TURN',
+                playerId: localName,
+              },
+            });
+            console.log('Turn ended, forced discard if >7, next turn now');
+          } catch (err) {
+            alert(err.message);
+          }
+        });
 
       });
     </script>
