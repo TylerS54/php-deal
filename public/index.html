@@ -4,27 +4,48 @@
     <meta charset="utf-8" />
     <title>Monopoly Deal</title>
 
-    <!-- Firebase scripts (with useEmulator for local testing) -->
+    <!-- Firebase scripts -->
     <script defer src="/__/firebase/11.1.0/firebase-app-compat.js"></script>
     <script defer src="/__/firebase/11.1.0/firebase-auth-compat.js"></script>
     <script defer src="/__/firebase/11.1.0/firebase-firestore-compat.js"></script>
     <script defer src="/__/firebase/11.1.0/firebase-functions-compat.js"></script>
-
-    <!-- This loads your Firebase config for local dev (auth+firestore emulators, etc.) -->
     <script defer src="/__/firebase/init.js?useEmulator=true"></script>
 
     <style>
+      /* Simple Material-like styles */
+
       body {
-        font-family: sans-serif;
         margin: 0;
-        padding: 0;
-        background: #fafafa;
+        font-family: 'Roboto', sans-serif;
+        background: #f5f5f5;
+        color: #333;
       }
       .container {
         max-width: 900px;
         margin: 0 auto;
         padding: 16px;
       }
+      h1 {
+        margin-top: 0;
+      }
+
+      /* Buttons */
+      .md-button {
+        background-color: #6200ee;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        padding: 8px 16px;
+        font-size: 14px;
+        cursor: pointer;
+        margin-right: 8px;
+        text-transform: uppercase;
+      }
+      .md-button:hover {
+        background-color: #4f00c9;
+      }
+
+      /* Players Grid */
       .players-container {
         display: flex;
         flex-wrap: wrap;
@@ -32,18 +53,12 @@
         margin-top: 16px;
       }
       .player-card {
-        width: 200px;
         background: #fff;
         border-radius: 8px;
-        padding: 12px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        padding: 16px;
+        width: 220px;
         position: relative;
-      }
-      .player-card-header {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        margin-bottom: 8px;
       }
       .player-turn {
         position: absolute;
@@ -51,101 +66,194 @@
         background: #ef5350;
         color: white;
         font-size: 12px;
-        padding: 2px 6px;
+        padding: 4px 8px;
         border-bottom-left-radius: 8px;
         border-top-right-radius: 8px;
       }
+      .player-card-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .player-card-header img {
+        border-radius: 50%;
+      }
+      .player-bank, .player-properties, .player-hand {
+        margin-top: 12px;
+      }
+
+      /* Card thumbnail styling */
       .card {
         display: inline-block;
         margin: 4px;
         cursor: pointer;
         position: relative;
+        transition: transform 0.2s;
+        border-radius: 4px;
         overflow: hidden;
-        transition: transform 0.2s; /* smooth enlarge */
       }
       .card img {
         width: 60px;
-        border-radius: 4px;
+        height: auto;
         transition: transform 0.2s;
       }
-      /* Hover to enlarge */
       .card:hover img {
-        transform: scale(1.5);
-        z-index: 99;
+        transform: scale(1.3);
       }
 
-      /* Bank styling example */
-      .player-bank {
-        margin-top: 8px;
+      /* Snackbar / notification area */
+      #snackbar {
+        visibility: hidden;
+        min-width: 250px;
+        background-color: #323232;
+        color: #fff;
+        text-align: center;
+        border-radius: 4px;
+        padding: 12px;
+        position: fixed;
+        left: 50%;
+        bottom: 30px;
+        transform: translateX(-50%);
+        z-index: 999;
+        font-size: 14px;
       }
-      .bank-total {
+      #snackbar.show {
+        visibility: visible;
+        animation: fadein 0.5s, fadeout 3.5s 2.5s;
+      }
+      @keyframes fadein {
+        from { bottom: 0; opacity: 0;}
+        to { bottom: 30px; opacity: 1;}
+      }
+      @keyframes fadeout {
+        from { bottom: 30px; opacity: 1;}
+        to { bottom: 0; opacity: 0;}
+      }
+
+      /* Modal overlay for "card play" choices or discard selection */
+      .modal-overlay {
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background: rgba(0,0,0,0.5);
+        display: none; /* hidden by default */
+        justify-content: center;
+        align-items: center;
+        z-index: 1000;
+      }
+      .modal {
+        background: #fff;
+        border-radius: 8px;
+        padding: 16px;
+        width: 300px;
+        max-width: 80%;
+      }
+      .modal-header {
         font-weight: bold;
+        margin-bottom: 8px;
       }
-      .debug-output {
-        background:#eee; 
-        padding:1em; 
-        white-space:pre-wrap; 
-        margin-top:16px;
-        max-height: 300px;
-        overflow-y: auto;
+      .modal-body {
+        margin-bottom: 16px;
       }
+      .choice-button {
+        background: #03dac5;
+        color: #000;
+        border: none;
+        padding: 8px 12px;
+        border-radius: 4px;
+        margin-right: 8px;
+        cursor: pointer;
+      }
+      .choice-button:hover {
+        background: #00b9a6;
+      }
+
     </style>
   </head>
   <body>
     <div class="container">
       <h1>Monopoly Deal</h1>
-
-      <!-- Name input -->
-      <div>
-        <label for="playerName">Your Name: </label>
-        <input id="playerName" type="text" placeholder="e.g. Alice" />
+      <div style="margin-bottom:16px;">
+        <label>Your Name:</label>
+        <input id="playerName" type="text" placeholder="Alice" style="padding:4px;" />
+        <button class="md-button" id="btnCreateGame">Create Game</button>
+        <button class="md-button" id="btnJoinGame">Join Game</button>
+        <button class="md-button" id="btnStartGame" style="display:none;">
+          Start Game
+        </button>
+        <button class="md-button" id="btnEndTurn" style="display:none;">
+          End Turn
+        </button>
       </div>
 
-      <!-- Buttons -->
-      <div style="margin-top: 16px;">
-        <button id="btnCreateGame">Create Game</button>
-        <button id="btnJoinGame">Join Game</button>
-        <button id="btnStartGame" style="display:none;">Start Game</button>
-        <button id="btnBeginTurn" style="display:none;">Begin Turn</button>
-        <button id="btnEndTurn" style="display:none;">End Turn</button>
-      </div>
+      <div id="gameCode" style="font-weight:bold; font-size:18px; margin-bottom:8px;"></div>
+      <div id="gameStatusBanner" style="margin-bottom:16px; font-size:16px;"></div>
 
-      <!-- Show the current game code, e.g. "Game Code: ABC12" -->
-      <div id="gameCode" style="font-size:20px; margin:16px 0;"></div>
-
-      <!-- Show game status -->
-      <div id="gameStatusBanner" style="font-size:18px; font-weight:bold;"></div>
-
-      <!-- A place to show players, their cards, etc. -->
       <div class="players-container" id="playersContainer"></div>
+    </div>
 
-      <!-- Debug JSON -->
-      <pre class="debug-output" id="gameState"></pre>
+    <!-- "Snackbar" for small notifications -->
+    <div id="snackbar">Some message...</div>
+
+    <!-- Modal for selecting how to play a card -->
+    <div class="modal-overlay" id="cardModalOverlay">
+      <div class="modal">
+        <div class="modal-header" id="cardModalTitle"></div>
+        <div class="modal-body" id="cardModalBody"></div>
+        <div>
+          <button class="choice-button" id="btnPlayAsProperty">Property</button>
+          <button class="choice-button" id="btnPlayAsAction">Action</button>
+          <button class="choice-button" id="btnPlayAsBank">Bank</button>
+          <button class="choice-button" id="btnCancelPlay">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal for discarding cards -->
+    <div class="modal-overlay" id="discardModalOverlay">
+      <div class="modal">
+        <div class="modal-header">Discard Cards (down to 7)</div>
+        <div class="modal-body">
+          <div id="discardHandArea"></div>
+        </div>
+        <div>
+          <button class="choice-button" id="btnConfirmDiscard">Confirm Discard</button>
+          <button class="choice-button" id="btnCancelDiscard">Cancel</button>
+        </div>
+      </div>
     </div>
 
     <script>
+      let currentGameId = null;
+      let unsubscribeGame = null;
+      let lastTurnIndex = null; // to detect turn changes
+      let pendingBeginTurn = false; // so we don't spam "BEGIN_TURN" calls
+
       document.addEventListener('DOMContentLoaded', async () => {
+        // 1) Firebase init
         try {
           await firebase.auth().signInAnonymously();
-          console.log('Signed in anonymously');
-        } catch (error) {
-          console.error('Error signing in anonymously:', error);
+        } catch (e) {
+          showSnackbar('Failed to sign in anonymously: ' + e.message);
         }
-
         const db = firebase.firestore();
         const functions = firebase.functions();
 
-        let currentGameId = null;
-        let unsubscribeGame = null;
+        // 2) Utility to show quick notifications
+        function showSnackbar(msg) {
+          const bar = document.getElementById('snackbar');
+          bar.textContent = msg;
+          bar.className = 'show';
+          setTimeout(() => { bar.className = bar.className.replace('show',''); }, 4000);
+        }
 
-        // Watch a given game ID in Firestore
+        // 3) Watch a game
         function watchGame(gameId) {
           currentGameId = gameId;
           if (unsubscribeGame) unsubscribeGame();
           const gameRef = db.collection('games').doc(gameId);
           unsubscribeGame = gameRef.onSnapshot((doc) => {
             if (!doc.exists) {
-              document.getElementById('gameState').innerText = 'Game does not exist.';
+              showSnackbar('Game does not exist.');
               return;
             }
             const data = doc.data();
@@ -153,36 +261,69 @@
           });
         }
 
-        // Renders the entire game state for the UI
-        function renderGame(gameId, gameData) {
-          document.getElementById('gameState').innerText = JSON.stringify(gameData, null, 2);
-          document.getElementById('gameCode').textContent = 'Game Code: ' + gameId;
+        // 4) Render the game
+        async function renderGame(gameId, gameData) {
+          document.getElementById('gameCode').textContent =
+            'Game Code: ' + gameId;
+          document.getElementById('gameStatusBanner').textContent =
+            'Status: ' + gameData.status;
 
-          const { status, hostUid, playerIds, turnIndex, hands, properties, bank, numPlaysThisTurn } = gameData;
-          document.getElementById('gameStatusBanner').textContent = 'Game Status: ' + status;
-
-          // If I'm the host & status=lobby, show startGame
           const localName = document.getElementById('playerName').value.trim();
+          const {
+            playerIds = [],
+            hostUid,
+            turnIndex,
+            hands,
+            bank,
+            properties,
+            status,
+            numPlaysThisTurn
+          } = gameData;
+
+          // Show "Start Game" if I'm the host and status === 'lobby'
           const btnStartGame = document.getElementById('btnStartGame');
-          btnStartGame.style.display = (localName === hostUid && status === 'lobby') ? 'inline-block' : 'none';
+          btnStartGame.style.display =
+            localName === hostUid && status === 'lobby' ? 'inline-block' : 'none';
 
-          // If status=inProgress and it's my turn, show Begin/End Turn if needed.
-          const btnBeginTurn = document.getElementById('btnBeginTurn');
+          // Show "End Turn" if status=inProgress and it's my turn
           const btnEndTurn = document.getElementById('btnEndTurn');
-
-          if (status === 'inProgress' && localName === playerIds[turnIndex]) {
-            btnBeginTurn.style.display = (numPlaysThisTurn === 0) ? 'inline-block' : 'none';
+          if (status === 'inProgress' && playerIds[turnIndex] === localName) {
             btnEndTurn.style.display = 'inline-block';
           } else {
-            btnBeginTurn.style.display = 'none';
             btnEndTurn.style.display = 'none';
           }
 
-          // Render each player's section
+          // If it's my turn and numPlaysThisTurn===0, automatically do BEGIN_TURN (once)
+          if (
+            status === 'inProgress' &&
+            playerIds[turnIndex] === localName &&
+            numPlaysThisTurn === 0 &&
+            lastTurnIndex !== turnIndex &&
+            !pendingBeginTurn
+          ) {
+            pendingBeginTurn = true;
+            // Trigger "BEGIN_TURN"
+            try {
+              const playMoveFn = firebase.functions().httpsCallable('playMove');
+              await playMoveFn({
+                gameId,
+                move: {
+                  actionType: 'BEGIN_TURN',
+                  playerId: localName
+                }
+              });
+              showSnackbar('You drew 2 cards to start your turn.');
+            } catch (err) {
+              showSnackbar(err.message);
+            } finally {
+              pendingBeginTurn = false;
+            }
+          }
+          lastTurnIndex = turnIndex;
+
+          // Render players
           const container = document.getElementById('playersContainer');
           container.innerHTML = '';
-
-          if (!playerIds) return;
           playerIds.forEach((pName, idx) => {
             const cardDiv = document.createElement('div');
             cardDiv.className = 'player-card';
@@ -195,132 +336,88 @@
               cardDiv.appendChild(turnBadge);
             }
 
-            // Header: avatar + name
+            // Player header
             const header = document.createElement('div');
             header.className = 'player-card-header';
-            cardDiv.appendChild(header);
-
             const avatarUrl = `https://api.dicebear.com/6.x/bottts/svg?seed=${encodeURIComponent(pName)}`;
-            const img = document.createElement('img');
-            img.src = avatarUrl;
-            img.width = 40; 
-            img.height = 40;
-            header.appendChild(img);
+            const avatarImg = document.createElement('img');
+            avatarImg.src = avatarUrl;
+            avatarImg.width = 40;
+            avatarImg.height = 40;
+            header.appendChild(avatarImg);
 
             const nameSpan = document.createElement('span');
             nameSpan.textContent = pName;
             header.appendChild(nameSpan);
 
-            // Show player's bank
+            cardDiv.appendChild(header);
+
+            // Bank
             const bankDiv = document.createElement('div');
             bankDiv.className = 'player-bank';
-            const playerBank = (bank && bank[pName]) || [];
-            let totalBankValue = 0;
-            playerBank.forEach((bCard) => {
-              totalBankValue += bCard.value || 0;
-            });
-            bankDiv.innerHTML = `<strong>Bank ($${totalBankValue}):</strong><br/>`;
-            // Show each banked card image
-            playerBank.forEach((bCard) => {
-              const c = document.createElement('div');
-              c.className = 'card';
-              if (bCard.imageUrl) {
-                const bImg = document.createElement('img');
-                bImg.src = bCard.imageUrl;
-                c.appendChild(bImg);
+            const pBank = (bank && bank[pName]) || [];
+            let total = 0;
+            pBank.forEach((bc) => { total += bc.value || 0; });
+            bankDiv.innerHTML = `<strong>Bank: $${total}</strong><br/>`;
+            pBank.forEach((bc) => {
+              const cd = document.createElement('div');
+              cd.className = 'card';
+              if (bc.imageUrl) {
+                const img = document.createElement('img');
+                img.src = bc.imageUrl;
+                cd.appendChild(img);
               } else {
-                c.textContent = bCard.title || bCard.id;
+                cd.textContent = bc.title || bc.id;
               }
-              bankDiv.appendChild(c);
+              bankDiv.appendChild(cd);
             });
             cardDiv.appendChild(bankDiv);
 
-            // Show player's properties
+            // Properties
             const propDiv = document.createElement('div');
-            propDiv.innerHTML = '<strong>Properties:</strong><br/>';
+            propDiv.className = 'player-properties';
+            propDiv.innerHTML = `<strong>Properties:</strong><br/>`;
             const playerProps = (properties && properties[pName]) || {};
-            Object.keys(playerProps).forEach((color) => {
-              const colorCards = playerProps[color] || [];
-              colorCards.forEach((pcard) => {
-                const c = document.createElement('div');
-                c.className = 'card';
-                if (pcard.imageUrl) {
-                  const pImg = document.createElement('img');
-                  pImg.src = pcard.imageUrl;
-                  c.appendChild(pImg);
+            Object.keys(playerProps).forEach((colorKey) => {
+              playerProps[colorKey].forEach((propCard) => {
+                const cd = document.createElement('div');
+                cd.className = 'card';
+                if (propCard.imageUrl) {
+                  const img = document.createElement('img');
+                  img.src = propCard.imageUrl;
+                  cd.appendChild(img);
                 } else {
-                  c.textContent = pcard.title || pcard.id;
+                  cd.textContent = propCard.title || propCard.id;
                 }
-                propDiv.appendChild(c);
+                propDiv.appendChild(cd);
               });
             });
             cardDiv.appendChild(propDiv);
 
-            // Show hand (only if local player)
+            // Hand (only visible to local player)
             const handDiv = document.createElement('div');
+            handDiv.className = 'player-hand';
             if (pName === localName) {
-              handDiv.innerHTML = '<strong>Your Hand:</strong><br/>';
-              const myHand = (hands && hands[pName]) || [];
+              handDiv.innerHTML = `<strong>Your Hand:</strong><br/>`;
+              const myHand = hands[pName] || [];
               myHand.forEach((hCard) => {
-                const c = document.createElement('div');
-                c.className = 'card';
+                const cd = document.createElement('div');
+                cd.className = 'card';
                 if (hCard.imageUrl) {
-                  const hImg = document.createElement('img');
-                  hImg.src = hCard.imageUrl;
-                  c.appendChild(hImg);
+                  const img = document.createElement('img');
+                  img.src = hCard.imageUrl;
+                  cd.appendChild(img);
                 } else {
-                  c.textContent = hCard.title || hCard.id;
+                  cd.textContent = hCard.title || hCard.id;
                 }
-
-                // On click => ask user how to play/bank
-                c.addEventListener('click', async () => {
-                  // If it's property, only "play property." If it's non-property, we can ask bank or action
-                  if (hCard.type === 'property' || hCard.type === 'property-wild') {
-                    if (!confirm(`Play ${hCard.title || hCard.id} as property?`)) return;
-                    try {
-                      const playMoveFn = functions.httpsCallable('playMove');
-                      const result = await playMoveFn({
-                        gameId: currentGameId,
-                        move: {
-                          actionType: 'PLAY_CARD',
-                          playerId: localName,
-                          card: hCard,
-                          playAs: 'property',
-                          color: hCard.color || 'any',
-                        },
-                      });
-                      console.log('PLAY_CARD result:', result.data);
-                    } catch (err) {
-                      alert(err.message);
-                    }
-                  } else {
-                    // Not a property => can be banked or used as an action
-                    const choice = prompt(`Type 'bank' or 'action' to use ${hCard.title || hCard.id}`);
-                    if (!choice) return;
-                    if (choice === 'bank' || choice === 'action') {
-                      try {
-                        const playMoveFn = functions.httpsCallable('playMove');
-                        const result = await playMoveFn({
-                          gameId: currentGameId,
-                          move: {
-                            actionType: 'PLAY_CARD',
-                            playerId: localName,
-                            card: hCard,
-                            playAs: choice,
-                          },
-                        });
-                        console.log('PLAY_CARD result:', result.data);
-                      } catch (err) {
-                        alert(err.message);
-                      }
-                    }
-                  }
+                // Clicking a card => open a modal to choose playAs
+                cd.addEventListener('click', () => {
+                  openCardModal(hCard);
                 });
-
-                handDiv.appendChild(c);
+                handDiv.appendChild(cd);
               });
             } else {
-              const count = (hands && hands[pName]) ? hands[pName].length : 0;
+              const count = (hands[pName] || []).length;
               handDiv.innerHTML = `<strong>Cards in Hand:</strong> ${count}`;
             }
             cardDiv.appendChild(handDiv);
@@ -329,24 +426,191 @@
           });
         }
 
+        /*********************************************
+         * Card Modal - user picks how to play the card
+         *********************************************/
+        let currentCardToPlay = null;
+        function openCardModal(hCard) {
+          currentCardToPlay = hCard;
+          const modalOverlay = document.getElementById('cardModalOverlay');
+          const titleElem = document.getElementById('cardModalTitle');
+          const bodyElem = document.getElementById('cardModalBody');
+
+          titleElem.textContent = hCard.title || hCard.id;
+          bodyElem.textContent = 'How would you like to play this card?';
+          modalOverlay.style.display = 'flex';
+
+          // If it’s a property, we might disable the “Bank” button.
+          const isProperty = (hCard.type === 'property' || hCard.type === 'property-wild');
+          document.getElementById('btnPlayAsBank').style.display = isProperty ? 'none' : 'inline-block';
+        }
+        function closeCardModal() {
+          document.getElementById('cardModalOverlay').style.display = 'none';
+          currentCardToPlay = null;
+        }
+
+        // Hook up modal buttons
+        document.getElementById('btnPlayAsProperty').addEventListener('click', async () => {
+          await doPlayCard('property');
+        });
+        document.getElementById('btnPlayAsAction').addEventListener('click', async () => {
+          await doPlayCard('action');
+        });
+        document.getElementById('btnPlayAsBank').addEventListener('click', async () => {
+          await doPlayCard('bank');
+        });
+        document.getElementById('btnCancelPlay').addEventListener('click', () => {
+          closeCardModal();
+        });
+
+        async function doPlayCard(playAs) {
+          if (!currentCardToPlay) return;
+          const localName = document.getElementById('playerName').value.trim();
+          try {
+            const playMoveFn = firebase.functions().httpsCallable('playMove');
+            const result = await playMoveFn({
+              gameId: currentGameId,
+              move: {
+                actionType: 'PLAY_CARD',
+                playerId: localName,
+                card: currentCardToPlay,
+                playAs
+              }
+            });
+            showSnackbar('Card played as ' + playAs);
+          } catch (err) {
+            showSnackbar(err.message);
+          }
+          closeCardModal();
+        }
+
+        /*********************************************
+         * Discard Modal
+         *********************************************/
+        let discardSelected = [];
+        document.getElementById('btnEndTurn').addEventListener('click', async () => {
+          // Before we actually do END_TURN, let's check if we have >7 cards in local hand.
+          const localName = document.getElementById('playerName').value.trim();
+          const gameDoc = await db.collection('games').doc(currentGameId).get();
+          if (!gameDoc.exists) return;
+          const gData = gameDoc.data();
+          const myHand = (gData.hands && gData.hands[localName]) || [];
+          if (myHand.length <= 7) {
+            // We can end turn safely
+            doEndTurn();
+          } else {
+            // We must discard first
+            openDiscardModal(myHand);
+          }
+        });
+
+        function openDiscardModal(myHand) {
+          discardSelected = []; // reset
+          const overlay = document.getElementById('discardModalOverlay');
+          overlay.style.display = 'flex';
+          const area = document.getElementById('discardHandArea');
+          area.innerHTML = '';
+
+          myHand.forEach((c) => {
+            const cd = document.createElement('div');
+            cd.className = 'card';
+            cd.style.border = '2px solid transparent';
+            if (c.imageUrl) {
+              const img = document.createElement('img');
+              img.src = c.imageUrl;
+              cd.appendChild(img);
+            } else {
+              cd.textContent = c.title || c.id;
+            }
+            cd.addEventListener('click', () => {
+              if (discardSelected.includes(c.id)) {
+                // unselect
+                discardSelected = discardSelected.filter((id) => id !== c.id);
+                cd.style.border = '2px solid transparent';
+              } else {
+                discardSelected.push(c.id);
+                cd.style.border = '2px solid #f44336';
+              }
+            });
+            area.appendChild(cd);
+          });
+        }
+        function closeDiscardModal() {
+          document.getElementById('discardModalOverlay').style.display = 'none';
+        }
+
+        document.getElementById('btnConfirmDiscard').addEventListener('click', async () => {
+          const localName = document.getElementById('playerName').value.trim();
+          // Send "DISCARD_CARDS" action
+          try {
+            const playMoveFn = firebase.functions().httpsCallable('playMove');
+            await playMoveFn({
+              gameId: currentGameId,
+              move: {
+                actionType: 'DISCARD_CARDS',
+                playerId: localName,
+                cardIdsToDiscard: discardSelected
+              }
+            });
+            showSnackbar(`Discarded ${discardSelected.length} card(s).`);
+          } catch (err) {
+            showSnackbar(err.message);
+          }
+          closeDiscardModal();
+
+          // Now check if we can end turn
+          const gameDoc = await db.collection('games').doc(currentGameId).get();
+          const gData = gameDoc.data();
+          const myHand = gData.hands[localName] || [];
+          if (myHand.length <= 7) {
+            doEndTurn();
+          } else {
+            showSnackbar('Still more than 7 cards. Discard again if needed.');
+          }
+        });
+        document.getElementById('btnCancelDiscard').addEventListener('click', () => {
+          closeDiscardModal();
+        });
+
+        async function doEndTurn() {
+          // Actually call "END_TURN"
+          const localName = document.getElementById('playerName').value.trim();
+          const playMoveFn = firebase.functions().httpsCallable('playMove');
+          try {
+            await playMoveFn({
+              gameId: currentGameId,
+              move: {
+                actionType: 'END_TURN',
+                playerId: localName
+              }
+            });
+            showSnackbar('Turn ended.');
+          } catch (err) {
+            showSnackbar(err.message);
+          }
+        }
+
+        /*********************************************
+         * Button Listeners
+         *********************************************/
         // Create Game
         document.getElementById('btnCreateGame').addEventListener('click', async () => {
           const playerName = document.getElementById('playerName').value.trim();
           if (!playerName) {
-            alert('Please enter your name first!');
+            showSnackbar('Enter your name first!');
             return;
           }
+          const createGameFn = firebase.functions().httpsCallable('createGame');
           try {
-            const fn = functions.httpsCallable('createGame');
-            const result = await fn({
+            const result = await createGameFn({
               hostUid: playerName,
-              playerIds: [playerName],
+              playerIds: [playerName]
             });
             const gameId = result.data.gameId;
-            alert('Created new game with ID: ' + gameId);
+            showSnackbar('Created new game: ' + gameId);
             watchGame(gameId);
           } catch (err) {
-            alert(err.message);
+            showSnackbar(err.message);
           }
         });
 
@@ -354,7 +618,7 @@
         document.getElementById('btnJoinGame').addEventListener('click', async () => {
           const playerName = document.getElementById('playerName').value.trim();
           if (!playerName) {
-            alert('Please enter your name first!');
+            showSnackbar('Enter your name first!');
             return;
           }
           const gameId = prompt('Enter game ID:');
@@ -367,7 +631,7 @@
               if (!snap.exists) throw new Error('Game does not exist!');
               const data = snap.data();
               if (data.status !== 'lobby') {
-                throw new Error('Game already in progress or finished!');
+                throw new Error('Game in progress or finished!');
               }
               tx.update(gameRef, {
                 playerIds: firebase.firestore.FieldValue.arrayUnion(playerName),
@@ -376,66 +640,24 @@
                 [`properties.${playerName}`]: {},
               });
             });
-            alert(`Joined game ${gameId} as ${playerName}`);
+            showSnackbar(`Joined game ${gameId} as ${playerName}`);
             watchGame(gameId);
           } catch (err) {
-            alert(err.message);
+            showSnackbar(err.message);
           }
         });
 
         // Start Game
         document.getElementById('btnStartGame').addEventListener('click', async () => {
-          if (!currentGameId) {
-            alert('No game code available.');
-            return;
-          }
-          try {
-            const fn = functions.httpsCallable('startGame');
-            await fn({ gameId: currentGameId });
-            alert('Game started! (5 cards dealt to each player)');
-          } catch (err) {
-            alert(err.message);
-          }
-        });
-
-        // Begin Turn (draw 2)
-        document.getElementById('btnBeginTurn').addEventListener('click', async () => {
           if (!currentGameId) return;
-          const localName = document.getElementById('playerName').value.trim();
-          const fn = functions.httpsCallable('playMove');
+          const startGameFn = firebase.functions().httpsCallable('startGame');
           try {
-            await fn({ 
-              gameId: currentGameId,
-              move: {
-                actionType: 'BEGIN_TURN',
-                playerId: localName,
-              },
-            });
-            console.log('Drew 2 cards');
+            await startGameFn({ gameId: currentGameId });
+            showSnackbar('Game started! 5 cards dealt to each player.');
           } catch (err) {
-            alert(err.message);
+            showSnackbar(err.message);
           }
         });
-
-        // End Turn
-        document.getElementById('btnEndTurn').addEventListener('click', async () => {
-          if (!currentGameId) return;
-          const localName = document.getElementById('playerName').value.trim();
-          const fn = functions.httpsCallable('playMove');
-          try {
-            await fn({
-              gameId: currentGameId,
-              move: {
-                actionType: 'END_TURN',
-                playerId: localName,
-              },
-            });
-            console.log('Turn ended, forced discard if >7, next turn now');
-          } catch (err) {
-            alert(err.message);
-          }
-        });
-
       });
     </script>
   </body>

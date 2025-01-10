@@ -125,6 +125,9 @@ exports.startGame = onCall(async (request) => {
  *   - "END_TURN": finalize turn, discard if needed, move turnIndex
  *   - For property: can't bank it. For action/money/rent: can bank or use action, etc.
  */
+/**********************************
+ * playMove
+ **********************************/
 exports.playMove = onCall(async (request) => {
   const { gameId, move } = request.data;
   if (!gameId || !move || !move.actionType) {
@@ -166,73 +169,65 @@ exports.playMove = onCall(async (request) => {
       throw new HttpsError('failed-precondition', 'Not your turn!');
     }
 
-    // Handle each actionType:
     switch (move.actionType) {
-      case 'BEGIN_TURN':
-        // Draw 2 from deck
+      case 'BEGIN_TURN': {
+        // Draw 2 from the deck automatically at turn start
         if (!deck || deck.length < 2) {
-          throw new HttpsError('failed-precondition', 'Not enough cards in deck to draw 2.');
+          throw new HttpsError(
+            'failed-precondition',
+            'Not enough cards in deck to draw 2.'
+          );
         }
         hands[currentPlayerId].push(deck.shift());
         hands[currentPlayerId].push(deck.shift());
-        // reset plays for turn
         gameData.numPlaysThisTurn = 0;
         break;
+      }
 
       case 'PLAY_CARD': {
-        // Enforce max 3 plays
+        // Make sure we haven't exceeded 3 plays
         if (numPlaysThisTurn >= 3) {
           throw new HttpsError(
             'failed-precondition',
             'You have already played 3 cards this turn.'
           );
         }
-        const { card, playAs, color } = move; 
-        // "playAs" might be "property" or "bank"
-        // or for an action card, "action" or "bank"
-
-        // Make sure the card is actually in the player's hand
-        const cardIndex = hands[currentPlayerId].findIndex((c) => c.id === card.id);
+        const { card, playAs, color } = move;
+        const cardIndex = hands[currentPlayerId].findIndex(
+          (c) => c.id === card.id
+        );
         if (cardIndex === -1) {
           throw new HttpsError('failed-precondition', 'Card not in hand.');
         }
-        // Remove from hand
         const [theCard] = hands[currentPlayerId].splice(cardIndex, 1);
 
         if (playAs === 'bank') {
-          // Put in bank, but only if it's NOT a property
           if (theCard.type === 'property' || theCard.type === 'property-wild') {
             throw new HttpsError(
               'failed-precondition',
-              'Properties cannot be banked!'
+              'Cannot bank a property.'
             );
           }
           bank[currentPlayerId].push(theCard);
         } else if (playAs === 'property') {
-          // For property or property-wild
-          // If it's a normal property
-          if (theCard.type === 'property' || theCard.type === 'property-wild') {
-            const propColor = color || theCard.color || 'any';
-            if (!properties[currentPlayerId][propColor]) {
-              properties[currentPlayerId][propColor] = [];
-            }
-            properties[currentPlayerId][propColor].push(theCard);
-          } else {
-            // It's an action or money or rent card, if user tries to place it as property => not possible
+          if (theCard.type !== 'property' && theCard.type !== 'property-wild') {
             throw new HttpsError(
               'failed-precondition',
-              'Non-property cannot be played as property.'
+              'Cannot play non-property as property.'
             );
           }
+          const propColor = color || theCard.color || 'any';
+          if (!properties[currentPlayerId][propColor]) {
+            properties[currentPlayerId][propColor] = [];
+          }
+          properties[currentPlayerId][propColor].push(theCard);
         } else if (playAs === 'action') {
-          // e.g. "Just say no", "sly deal", "rent card", etc.
-          // For now, we'll just discard it. (Real logic would do something more elaborate.)
+          // Just discard for now, or add your own action logic
           discardPile.push(theCard);
         } else {
-          // unrecognized
           throw new HttpsError(
             'invalid-argument',
-            'Must provide a valid "playAs" type.'
+            'Must specify a valid playAs type.'
           );
         }
 
@@ -240,16 +235,40 @@ exports.playMove = onCall(async (request) => {
         break;
       }
 
-      case 'END_TURN':
-        // If > 7 cards in hand, force discard
-        while (hands[currentPlayerId].length > 7) {
-          discardPile.push(hands[currentPlayerId].pop());
+      case 'DISCARD_CARDS': {
+        // The player chooses which cards to discard from their hand.
+        const { cardIdsToDiscard } = move;
+        if (!cardIdsToDiscard || !Array.isArray(cardIdsToDiscard)) {
+          throw new HttpsError(
+            'invalid-argument',
+            'Must provide an array of cardIdsToDiscard.'
+          );
         }
-        // Move turn to next player
+        // Remove those cards from the player's hand
+        cardIdsToDiscard.forEach((discardId) => {
+          const idx = hands[currentPlayerId].findIndex((c) => c.id === discardId);
+          if (idx !== -1) {
+            const [removed] = hands[currentPlayerId].splice(idx, 1);
+            discardPile.push(removed);
+          }
+        });
+        // Now the user can call END_TURN if they want, but that is separate
+        break;
+      }
+
+      case 'END_TURN': {
+        // Check if user still has >7 cards
+     //   if (hands[currentPlayerId].length > 7) {
+     //     throw new HttpsError(
+     //       'failed-precondition',
+     //      'You have more than 7 cards. Discard first.'
+      //    );
+      //  }
+        // Move to next player, reset plays
         gameData.turnIndex = (turnIndex + 1) % playerIds.length;
-        // Reset plays
         gameData.numPlaysThisTurn = 0;
         break;
+      }
 
       default:
         throw new HttpsError('invalid-argument', 'Unknown actionType.');
